@@ -88,6 +88,20 @@ def _run_scan(rows, **kwargs):
     return store, mock_qb_inst
 
 
+def _calcjob_append_calls(mock_qb):
+    """Return only the append() calls targeting CalcJobNode (the main query).
+
+    scan_aiida_calculations also issues a second QueryBuilder append for phonon
+    WorkChainNodes (which always carries a process_type filter). The engine-filter
+    tests are about the main CalcJob query, so restrict to those append calls.
+    """
+    return [
+        c
+        for c in mock_qb.append.call_args_list
+        if c.args and getattr(c.args[0], "__name__", "") == "CalcJobNode"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Provider override
 # ---------------------------------------------------------------------------
@@ -227,7 +241,7 @@ class TestEngineFilter:
         rows = _make_mixed_rows()
         store, mock_qb = _run_scan(rows, engine=None)
         # Check that append() was called — inspect filters argument
-        append_calls = mock_qb.append.call_args_list
+        append_calls = _calcjob_append_calls(mock_qb)
         # Find the call with filters containing CalcJobNode
         filters_found = None
         for call in append_calls:
@@ -243,7 +257,7 @@ class TestEngineFilter:
         """When engine='crystal', QueryBuilder.append() must get process_type filter."""
         rows = _make_mixed_rows()
         store, mock_qb = _run_scan(rows, engine="crystal")
-        append_calls = mock_qb.append.call_args_list
+        append_calls = _calcjob_append_calls(mock_qb)
         filters_found = None
         for call in append_calls:
             f = call.kwargs.get("filters")
@@ -260,7 +274,7 @@ class TestEngineFilter:
         """When engine='fleur', QueryBuilder.append() must get process_type filter."""
         rows = _make_mixed_rows()
         store, mock_qb = _run_scan(rows, engine="fleur")
-        append_calls = mock_qb.append.call_args_list
+        append_calls = _calcjob_append_calls(mock_qb)
         filters_found = None
         for call in append_calls:
             f = call.kwargs.get("filters")
@@ -278,7 +292,7 @@ class TestEngineFilter:
         rows = _make_mixed_rows()
         for engine in ("crystal", "fleur"):
             store, mock_qb = _run_scan(rows, engine=engine)
-            append_calls = mock_qb.append.call_args_list
+            append_calls = _calcjob_append_calls(mock_qb)
             for call in append_calls:
                 f = call.kwargs.get("filters")
                 if f and "process_type" in f:

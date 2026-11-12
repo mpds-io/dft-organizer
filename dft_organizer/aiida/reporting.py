@@ -405,6 +405,7 @@ _null_summary_keys = [
     "sum_sq_disp",
     "rmsd_disp",
     "output_path",
+    "cloud_rate",
     "cost",
     "currency",
     "mpds_id",
@@ -517,6 +518,7 @@ def scan_aiida_calculations(
             prov, rate, currency = resolve_provider_and_rate(
                 comp, provider=provider, machine_type=machine_type
             )
+            summary["cloud_rate"] = rate
             if currency is not None:
                 summary["currency"] = currency
             if rate is not None:
@@ -647,6 +649,7 @@ def _enrich_phonon_computer(
                     prov, rate, curr = resolve_provider_and_rate(
                         comp, provider=provider, machine_type=machine_type
                     )
+                    summary["cloud_rate"] = rate
                     if curr:
                         summary["currency"] = curr
                     if rate:
@@ -1078,6 +1081,7 @@ _SUMMARY_CSV_COLUMNS = [
     "exit_status",
     "exit_message",
     "duration",
+    "cloud_rate",
     "cost",
     "currency",
     "bandgap",
@@ -1370,6 +1374,7 @@ _PHONON_CSV_COLUMNS = [
     "exit_status",
     "computer",
     "duration",
+    "cloud_rate",
     "cost",
     "currency",
     "n_imaginary",
