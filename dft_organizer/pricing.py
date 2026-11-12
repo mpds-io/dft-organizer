@@ -24,7 +24,7 @@ CLOUD_PRICING: dict[str, dict[str, float]] = {
         "ccx53": 0.4006,
         "ccx63": 0.6001,
     },
-    "vultr_usa": {
+    "vultr": {
         # VC2 (virtual)
         "vc2-1c-1gb": 0.0075,
         "vc2-1c-2gb": 0.015,
@@ -57,7 +57,7 @@ _SUPPORTED_PROVIDERS = frozenset(CLOUD_PRICING.keys())
 
 _CURRENCY: dict[str, str] = {
     "hetzner": "EUR",
-    "vultr_usa": "USD",
+    "vultr": "USD",
 }
 
 _VULTR_TOKENS = ("vultr", "vc2", "vcpu", "vbm")
@@ -66,7 +66,7 @@ _VULTR_TOKENS = ("vultr", "vc2", "vcpu", "vbm")
 def detect_provider(computer_name: str | None) -> str:
     """Detect the cloud provider from an AiiDA computer name.
 
-    Returns ``"vultr_usa"`` when the lowercased name contains any of the
+    Returns ``"vultr"`` when the lowercased name contains any of the
     Vultr plan tokens (``vultr``, ``vc2``, ``vcpu``, ``vbm``); otherwise
     returns ``"hetzner"`` (the historical default, including for ``None``/empty).
     Never raises.
@@ -75,14 +75,14 @@ def detect_provider(computer_name: str | None) -> str:
         return "hetzner"
     name_lower = computer_name.lower()
     if any(tok in name_lower for tok in _VULTR_TOKENS):
-        return "vultr_usa"
+        return "vultr"
     return "hetzner"
 
 
 def get_currency(provider: str) -> Optional[str]:
     """Return the billing currency for a provider.
 
-    ``"vultr_usa"`` -> ``"USD"``, ``"hetzner"`` -> ``"EUR"``.
+    ``"vultr"`` -> ``"USD"``, ``"hetzner"`` -> ``"EUR"``.
     Returns ``None`` for unsupported/unknown providers (e.g. ``upcloud``).
     """
     return _CURRENCY.get(provider)
@@ -190,7 +190,7 @@ def resolve_provider_and_rate(
 _DEFAULT_CONFIG_PATH = "/etc/yascheduler/yascheduler.conf"
 
 _CONFIG_PROVIDER_KEYS = (
-    ("vultr_server_type", "vultr_usa"),
+    ("vultr_server_type", "vultr"),
     ("hetzner_server_type", "hetzner"),
     ("upcloud_server_type", "upcloud"),
 )
@@ -215,7 +215,7 @@ def read_provider_from_config(
 ) -> str | None:
     """Read the cloud provider from the yascheduler config.
 
-    Returns ``"vultr_usa"``/``"hetzner"``/``"upcloud"`` based on which
+    Returns ``"vultr"``/``"hetzner"``/``"upcloud"`` based on which
     ``*_server_type`` key is set in ``[clouds]``, or ``None`` when the
     file or section is missing. Never raises.
     """

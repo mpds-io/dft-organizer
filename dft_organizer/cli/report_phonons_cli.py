@@ -75,7 +75,7 @@ from dft_organizer.aiida.reporting import generate_aiida_phonon_reports
 )
 @click.option(
     "--provider",
-    type=click.Choice(["hetzner", "vultr_usa"], case_sensitive=False),
+    type=click.Choice(["hetzner", "vultr"], case_sensitive=False),
     default=None,
     help="Override cloud provider for cost calculation.",
 )

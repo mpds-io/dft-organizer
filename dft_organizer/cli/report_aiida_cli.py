@@ -58,7 +58,7 @@ from dft_organizer.aiida.reporting import generate_aiida_reports
     "--skip-displacement",
     is_flag=True,
     default=False,
-    help="Skip FLEUR displacement enrichment (slow pg8000 DB queries). FLEUR calc_type will stay 'scf' instead of being reclassified to 'optimise'.",
+    help="Debug/preview only. Skip the slow pg8000 FLEUR displacement enrichment (calc_type stays 'scf' instead of 'optimise'). Off by default; production keeps it on. Performance fix planned in a follow-up.",
 )
 @click.option(
     "--no-strict-filter",
@@ -68,7 +68,7 @@ from dft_organizer.aiida.reporting import generate_aiida_reports
 )
 @click.option(
     "--provider",
-    type=click.Choice(["hetzner", "vultr_usa"], case_sensitive=False),
+    type=click.Choice(["hetzner", "vultr"], case_sensitive=False),
     default=None,
     help="Override cloud provider for cost calculation (default: auto-detect from computer name).",
 )

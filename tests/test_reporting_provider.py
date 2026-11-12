@@ -94,11 +94,11 @@ def _run_scan(rows, **kwargs):
 
 
 class TestProviderOverride:
-    def test_provider_vultr_usa_overrides_yascheduler(self):
-        """--provider vultr_usa → USD, even though computer name is 'yascheduler'."""
+    def test_provider_vultr_overrides_yascheduler(self):
+        """--provider vultr → USD, even though computer name is 'yascheduler'."""
         rows = _make_mock_rows("yascheduler")
         store, _ = _run_scan(
-            rows, provider="vultr_usa", machine_type="vbm-24c-256gb-amd"
+            rows, provider="vultr", machine_type="vbm-24c-256gb-amd"
         )
         assert len(store) == 1
         s = store[0]
@@ -156,7 +156,7 @@ class TestMachineTypeOverride:
     def test_machine_type_vbm_24c_overrides_yascheduler(self):
         rows = _make_mock_rows("yascheduler")
         store, _ = _run_scan(
-            rows, provider="vultr_usa", machine_type="vbm-24c-256gb-amd"
+            rows, provider="vultr", machine_type="vbm-24c-256gb-amd"
         )
         assert len(store) == 1
         s = store[0]
@@ -165,14 +165,14 @@ class TestMachineTypeOverride:
 
     def test_machine_type_vbm_8c_overrides(self):
         rows = _make_mock_rows("yascheduler")
-        store, _ = _run_scan(rows, provider="vultr_usa", machine_type="vbm-8c-132gb-v2")
+        store, _ = _run_scan(rows, provider="vultr", machine_type="vbm-8c-132gb-v2")
         assert len(store) == 1
         s = store[0]
         assert s["cloud_rate"] == 0.479
 
     def test_machine_type_none_falls_back_to_computer_name(self):
         rows = _make_mock_rows("yascheduler")
-        store, _ = _run_scan(rows, provider="vultr_usa", machine_type=None)
+        store, _ = _run_scan(rows, provider="vultr", machine_type=None)
         assert len(store) == 1
         s = store[0]
         # 'yascheduler' is not a known vultr plan → rate is None
@@ -197,7 +197,7 @@ class TestCrossProviderMismatch:
 
     def test_vultr_provider_hetzner_machine_type(self):
         rows = _make_mock_rows("yascheduler")
-        store, _ = _run_scan(rows, provider="vultr_usa", machine_type="ccx13")
+        store, _ = _run_scan(rows, provider="vultr", machine_type="ccx13")
         assert len(store) == 1
         s = store[0]
         assert s["currency"] == "USD"
