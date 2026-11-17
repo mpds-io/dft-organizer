@@ -56,11 +56,12 @@ def extract_frequencies_from_workchain(
     An override does not modify stored AiiDA outputs. Callers must preserve
     the reconstruction provenance alongside the resulting report.
 
-    Compact stored force constants (one row per primitive atom) that do not
-    fit this extractor's primitive-less Phonopy instance -- the case for
-    centered lattices (body-centered, rhombohedral) -- are expanded to the
-    full form via the workchain's stored phonopy_data, with the primitive
-    rows verified to round-trip.
+    Stored compact force constants (one row per primitive atom) are expanded
+    to the full form via the workchain's phonopy_data, with the primitive
+    rows verified to round-trip; the full-matrix symmetrization then
+    enforces the acoustic sum rule. When expansion is not possible, direct
+    assignment is used as a fallback and only centered lattices (where no
+    direct assignment is possible) yield an error.
     """
     if mesh is None:
         mesh = DEFAULT_MESH
@@ -108,48 +109,49 @@ def extract_frequencies_from_workchain(
             )
         fc = replacement.copy()
     else:
-        # Compact force constants store one row per primitive atom, which
-        # this primitive-less Phonopy instance (primitive == unit cell)
-        # cannot take directly when the lattice is centered (body-centered,
-        # rhombohedral). Expand them to the full form via the stored
-        # PhonopyData instance, which knows the correct primitive; the
-        # full matrix is accepted regardless of the primitive setting.
+        # Compact force constants store one row per primitive atom. Expand
+        # them to the full form via the stored PhonopyData instance, which
+        # knows the correct primitive: the full matrix is accepted
+        # regardless of the primitive setting, and its symmetrization
+        # enforces the acoustic sum rule, keeping the Gamma-point acoustic
+        # branches at zero (direct compact assignment leaves residual sum
+        # violations that leak into gamma_opt/n_imaginary). Expansion is
+        # best-effort: when phonopy_data is unusable or disagrees with the
+        # stored rows, fall back to the direct assignment whenever the row
+        # count fits this primitive-less instance, and only error out for
+        # centered lattices where no direct assignment is possible at all.
         n_supercell = len(ph.supercell)
-        if (
-            fc.ndim == 4
-            and fc.shape[1] == n_supercell
-            and fc.shape[0] not in (n_supercell, len(ph.primitive))
-        ):
+        if fc.ndim == 4 and fc.shape[1] == n_supercell and fc.shape[0] != n_supercell:
+            full_fc, p2s, exp_error = None, None, None
             try:
                 phonon = wc.outputs.phonopy_data.get_phonopy_instance()
                 phonon.produce_force_constants(calculate_full_force_constants=True)
                 full_fc = np.asarray(phonon.force_constants, dtype=float)
                 p2s = np.asarray(phonon.primitive.p2s_map)
             except Exception:
+                full_fc = None
+            if full_fc is not None:
+                if (
+                    full_fc.shape != (n_supercell, n_supercell, 3, 3)
+                    or len(p2s) != fc.shape[0]
+                ):
+                    full_fc = None
+                elif not np.allclose(full_fc[p2s], fc, atol=1e-8, rtol=0):
+                    full_fc = None
+                    exp_error = (
+                        f"PK {pk}: expanded force constants disagree with "
+                        "the stored primitive rows"
+                    )
+            if full_fc is not None:
+                fc = full_fc
+            elif fc.shape[0] not in (n_supercell, len(ph.primitive)):
                 return {
-                    "error": (
+                    "error": exp_error
+                    or (
                         f"PK {pk}: compact force constants (shape {fc.shape}) "
                         "require a usable phonopy_data output to expand"
                     )
                 }
-            if (
-                full_fc.shape != (n_supercell, n_supercell, 3, 3)
-                or len(p2s) != fc.shape[0]
-            ):
-                return {
-                    "error": (
-                        f"PK {pk}: expanded force constants have unexpected "
-                        f"shape {full_fc.shape} for compact {fc.shape}"
-                    )
-                }
-            if not np.allclose(full_fc[p2s], fc, atol=1e-8, rtol=0):
-                return {
-                    "error": (
-                        f"PK {pk}: expanded force constants disagree with "
-                        "the stored primitive rows"
-                    )
-                }
-            fc = full_fc
     ph.force_constants = fc
     ph.symmetrize_force_constants()
 

@@ -98,3 +98,48 @@ def test_inconsistent_expansion_is_rejected(monkeypatch):
     freqs = pu.extract_frequencies_from_workchain(1, mesh=[2, 2, 2])
     assert "error" in freqs
     assert "disagree" in freqs["error"]
+
+
+def test_p_lattice_compact_also_expands(monkeypatch):
+    """Compact FC that could be assigned directly is still expanded: the
+    full-form symmetrization enforces the acoustic sum rule."""
+    atoms = Atoms(
+        "Si2",
+        cell=np.eye(3) * 5.43,
+        scaled_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        pbc=True,
+    )
+    full_fc = _spring_full_fc(16)
+    p2s = [0, 8]
+    compact_fc = full_fc[p2s].copy()  # (2, 16, 3, 3): direct assignment fits
+    fake = _FakePhonopy(full_fc)
+    fake.primitive = SimpleNamespace(p2s_map=p2s)
+    calls = {"n": 0}
+    original = fake.produce_force_constants
+
+    def spy(calculate_full_force_constants):
+        calls["n"] += 1
+        return original(calculate_full_force_constants)
+
+    fake.produce_force_constants = spy
+    wc = SimpleNamespace(
+        inputs=SimpleNamespace(
+            structure=SimpleNamespace(get_ase=lambda: atoms),
+            supercell_matrix=SimpleNamespace(get_list=lambda: SUPERCELL),
+        ),
+        outputs=SimpleNamespace(
+            output_phonopy=SimpleNamespace(
+                output_force_constants=SimpleNamespace(
+                    get_array=lambda name: compact_fc
+                ),
+                output_parameters=SimpleNamespace(get_dict=lambda: {}),
+            ),
+            phonopy_data=SimpleNamespace(get_phonopy_instance=lambda: fake),
+        ),
+    )
+    monkeypatch.setattr("aiida.orm.load_node", lambda pk: wc)
+    freqs = pu.extract_frequencies_from_workchain(1, mesh=[2, 2, 2])
+    assert "error" not in freqs
+    assert calls["n"] == 1  # expanded, not assigned directly
+    assert freqs["n_imaginary"] == 0
+    assert len(freqs["gamma_freqs_cm1"]) == 6
