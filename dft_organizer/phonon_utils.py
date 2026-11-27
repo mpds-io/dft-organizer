@@ -474,6 +474,162 @@ def _sgs_from_label(label: str | None) -> int | None:
         return None
 
 
+def _engine_from_process_type(process_type: str | None) -> str | None:
+    lowered = (process_type or "").lower()
+    for engine in ("crystal", "fleur", "abacus"):
+        if engine in lowered:
+            return engine
+    return None
+
+
+def _optimize_structure_flag(node: Any) -> bool | None:
+    """Closest ``options.optimize_structure`` flag up the caller chain."""
+    current = node
+    visited = 0
+    while current is not None and visited < 12:
+        try:
+            for link in current.base.links.get_incoming().all():
+                if link.link_label == "workchain_options":
+                    options = link.node.get_dict().get("options", {})
+                    flag = options.get("optimize_structure")
+                    if flag is not None:
+                        return flag
+        except Exception:
+            pass
+        current = getattr(current, "caller", None)
+        visited += 1
+    return None
+
+
+def classify_geometry_provenance(pk: int) -> dict[str, Any]:
+    """Classify whether a phonon run used a geometry optimized by the same engine.
+
+    A phonon row (PhonopyFleurWorkChain, PhonopyAbacusWorkChain or a
+    CRYSTAL phonon CalcJobNode) follows the optimization-everywhere policy
+    when its input structure was created by a geometry optimization of the
+    same engine with the same setup. ``geometry_optimized`` verdicts:
+
+    - ``yes``: the structure was created by a same-engine optimization
+      (CRYSTAL OPTGEOM calculation, ABACUS relax workchain, FLEUR
+      lattice-search workchain) in the same pipeline.
+    - ``questionable``: the structure was optimized by a different engine,
+      was built by a manual calcfunction (cell doubling, setting change),
+      an optimization ran in the pipeline but the phonon structure is a
+      provenance-less re-created copy, or the provenance could not be
+      resolved at all -- the geometry exists but its correctness for
+      this particular run cannot be vouched for.
+    - ``no``: pristine structure with no creator -- no optimization of any
+      kind preceded the phonon run.
+
+    ``geometry_source`` carries the detailed evidence with the fine-grained
+    kind first (same-engine optimization / other-engine optimization /
+    manual transform / pristine / unresolved) plus structure and creator
+    pks, labels, and the ``optimize_structure`` flag.
+
+    Never raises: an unresolvable provenance yields ``"questionable"`` plus
+    a reason in ``geometry_source`` so reporting is never interrupted.
+
+    Returns ``{"geometry_optimized": verdict, "geometry_source": evidence}``.
+    """
+    result: dict[str, Any] = {
+        "geometry_optimized": "questionable",
+        "geometry_source": None,
+    }
+    try:
+        from aiida.orm import load_node
+
+        node = load_node(pk)
+    except Exception as exc:
+        result["geometry_source"] = f"unresolved: pk {pk} could not be loaded: {exc}"
+        return result
+
+    engine = _engine_from_process_type(getattr(node, "process_type", None))
+
+    structure = None
+    try:
+        structure = node.inputs.structure
+    except Exception:
+        pass
+
+    creator = None
+    try:
+        creator = structure.creator
+    except Exception:
+        pass
+
+    parts: list[str] = []
+    if structure is not None:
+        parts.append(f"structure pk={structure.pk}")
+    else:
+        parts.append("no structure input found")
+
+    if creator is None:
+        opt_ran = _caller_called_optimization(node)
+        if opt_ran is not None:
+            parts.append(
+                f"optimization step present ({opt_ran}) but the phonon "
+                "structure has no provenance link to it (likely a re-created "
+                "copy; compare cells manually)"
+            )
+            result["geometry_source"] = "unprovenanced copy: " + "; ".join(parts)
+            return result
+        flag = _optimize_structure_flag(node)
+        if flag is False:
+            parts.append("optimize_structure=False in workchain options")
+        elif flag is True:
+            parts.insert(
+                0, "unresolved: optimize_structure=True but structure has no creator;"
+            )
+            result["geometry_source"] = "; ".join(parts)
+            return result
+        result["geometry_optimized"] = "no"
+        result["geometry_source"] = "pristine: " + "; ".join(parts)
+        return result
+
+    creator_type = getattr(creator, "process_type", None) or ""
+    creator_label = getattr(creator, "label", "") or ""
+    creator_engine = _engine_from_process_type(creator_type)
+    parts.append(
+        f"created by pk={creator.pk} '{creator_label}' "
+        f"exit={getattr(creator, 'exit_status', None)}"
+    )
+
+    is_calculation = "aiida.calculations:" in creator_type
+    is_workchain = "aiida.workflows:" in creator_type
+    optimization_chain = _chain_has_optimization(creator)
+    is_optimization = (
+        "optimi" in creator_label.lower() or optimization_chain is not None
+    )
+    if optimization_chain is not None and "optimi" not in creator_label.lower():
+        parts.append(f"optimization chain: {optimization_chain}")
+    if not is_calculation and not is_workchain:
+        if not (is_optimization and creator_engine):
+            result["geometry_source"] = "manual transform: " + "; ".join(parts)
+            return result
+    elif creator_engine is None:
+        result["geometry_source"] = (
+            f"unresolved: unrecognized creator process type '{creator_type}'; "
+            + "; ".join(parts)
+        )
+        return result
+    elif is_calculation and not is_optimization:
+        result["geometry_source"] = (
+            "unresolved: creator calculation is not a geometry optimization; "
+            + "; ".join(parts)
+        )
+        return result
+
+    if creator_engine == engine:
+        result["geometry_optimized"] = "yes"
+        result["geometry_source"] = "same-engine optimization: " + "; ".join(parts)
+    else:
+        parts.append(
+            f"creator engine '{creator_engine}' differs from row engine '{engine}'"
+        )
+        result["geometry_source"] = "other-engine optimization: " + "; ".join(parts)
+    return result
+
+
 def get_phonon_workchain_summary(
     pk: int,
     mesh: list[int] | None = None,
@@ -557,6 +713,8 @@ def get_phonon_workchain_summary(
         "beta": round(cellpar[4], 6),
         "gamma": round(cellpar[5], 6),
     }
+
+    summary.update(classify_geometry_provenance(pk))
 
     freq_data = extract_frequencies_from_workchain(
         pk, mesh=mesh, force_constants_override=force_constants_override
@@ -759,6 +917,8 @@ def get_crystal_phonon_summary(
         "gamma": round(cellpar[5], 6),
     }
 
+    summary.update(classify_geometry_provenance(pk))
+
     freq_data = extract_frequencies_from_crystal_calc(pk)
     if "error" in freq_data:
         summary["error"] = freq_data["error"]
@@ -805,6 +965,48 @@ def get_crystal_phonon_summary(
     summary["mpds_n_entries"] = mpds_ref["n_entries"]
 
     return summary
+
+
+def _chain_has_optimization(start: Any, max_levels: int = 4) -> str | None:
+    """Describe a relax/optimization workchain found in the caller chain."""
+    current = start
+    visited = 0
+    while current is not None and visited < max_levels:
+        ptype = (getattr(current, "process_type", "") or "").lower()
+        label = (getattr(current, "label", "") or "").lower()
+        if any(k in ptype or k in label for k in ("relax", "optimi", "reoptimize")):
+            return (
+                f"pk={getattr(current, 'pk', '?')} "
+                f"'{getattr(current, 'process_type', '')}' "
+                f"('{getattr(current, 'label', '')}')"
+            )
+        current = getattr(current, "caller", None)
+        visited += 1
+    return None
+
+
+def _caller_called_optimization(node: Any, max_levels: int = 4) -> str | None:
+    """Describe an optimization workchain called by the node's callers."""
+    current = node
+    visited = 0
+    while current is not None and visited < max_levels:
+        try:
+            children = list(current.called)
+        except Exception:
+            children = []
+        for child in children:
+            ptype = (getattr(child, "process_type", "") or "").lower()
+            label = (getattr(child, "label", "") or "").lower()
+            if any(k in ptype or k in label for k in ("relax", "optimi", "reoptimize")):
+                return (
+                    f"caller pk={getattr(current, 'pk', '?')} ran "
+                    f"pk={getattr(child, 'pk', '?')} "
+                    f"'{getattr(child, 'process_type', '')}' "
+                    f"('{getattr(child, 'label', '')}')"
+                )
+        current = getattr(current, "caller", None)
+        visited += 1
+    return None
 
 
 def scan_phonon_workchains(
