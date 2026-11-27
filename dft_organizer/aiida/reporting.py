@@ -1377,6 +1377,8 @@ _PHONON_CSV_COLUMNS = [
     "chemical_formula",
     "pk",
     "engine",
+    "geometry_optimized",
+    "geometry_source",
     "space_group",
     "pearson",
     "label",
